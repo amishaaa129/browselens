@@ -1,0 +1,23 @@
+{
+  "name": "browselens",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "npm --prefix dashboard run dev",
+    "build": "tsc --noEmit && npm --prefix dashboard run build && esbuild extension/background.ts --bundle --format=iife --platform=browser --target=chrome120 --outfile=extension/background.js",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/chrome": "^0.3.6",
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "fake-indexeddb": "^6.2.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
