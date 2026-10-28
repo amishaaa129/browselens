@@ -1,6 +1,7 @@
 import { createActivity, sanitizeDomain } from "./tracker";
 import type { ActiveSession } from "./tracker";
 import { getActivities, saveActivity } from "./storage";
+import { classifyDomain } from "./classification";
 
 const SESSION_KEY = "browselens_active_session";
 const ENABLED_KEY = "browselens_enabled";
@@ -72,8 +73,9 @@ async function finishSession(): Promise<void> {
   const activity = createActivity(session, Date.now());
 
   if (activity) {
-    await saveActivity(activity);
-  }
+  activity.category = classifyDomain(activity.domain);
+  await saveActivity(activity);
+}
 }
 
 async function startSession(url: string | undefined): Promise<void> {

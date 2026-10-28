@@ -1,7 +1,27 @@
 
-import { useCallback, useEffect, useState } from "react";
-import { Activity, Clock, Globe, Pause, Play, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  Clock,
+  Globe,
+  Pause,
+  Play,
+  Trash2,
+  Tags,
+  Repeat2,
+  TrendingUp,
+} from "lucide-react";
 import { openDB, type DBSchema } from "idb";
+
+type WebsiteCategory =
+  | "Development"
+  | "Education"
+  | "Productivity"
+  | "Social Media"
+  | "Entertainment"
+  | "News"
+  | "Shopping"
+  | "Other";
 
 interface ActivityRecord {
   id?: number;
@@ -9,6 +29,7 @@ interface ActivityRecord {
   startedAt: number;
   endedAt: number;
   durationMs: number;
+  category?: WebsiteCategory;
 }
 
 interface BrowseLensDB extends DBSchema {
@@ -20,8 +41,116 @@ interface BrowseLensDB extends DBSchema {
 }
 
 const DB_NAME = "BrowseLensDB";
-const EXTENSION_ID = import.meta.env.VITE_EXTENSION_ID;
+const OVERRIDES_KEY = "browselens_category_overrides";
 
+const CATEGORIES: WebsiteCategory[] = [
+  "Development",
+  "Education",
+  "Productivity",
+  "Social Media",
+  "Entertainment",
+  "News",
+  "Shopping",
+  "Other",
+];
+
+const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
+  Development: [
+    "github.com",
+    "gitlab.com",
+    "stackoverflow.com",
+    "developer.mozilla.org",
+    "npmjs.com",
+    "vercel.com",
+    "docker.com",
+    "nodejs.org",
+  ],
+  Education: [
+    "sporcle.com",
+    "coursera.org",
+    "edx.org",
+    "khanacademy.org",
+    "wikipedia.org",
+    "udemy.com",
+    "leetcode.com",
+    "geeksforgeeks.org",
+  ],
+  Productivity: [
+    "notion.so",
+    "trello.com",
+    "asana.com",
+    "docs.google.com",
+    "drive.google.com",
+    "figma.com",
+    "linear.app",
+  ],
+  "Social Media": [
+    "instagram.com",
+    "facebook.com",
+    "reddit.com",
+    "x.com",
+    "twitter.com",
+    "threads.net",
+    "linkedin.com",
+  ],
+  Entertainment: [
+    "youtube.com",
+    "netflix.com",
+    "twitch.tv",
+    "spotify.com",
+    "pinterest.com",
+  ],
+  News: [
+    "bbc.com",
+    "bbc.co.uk",
+    "reuters.com",
+    "theguardian.com",
+    "cnn.com",
+    "nytimes.com",
+  ],
+  Shopping: [
+    "amazon.com",
+    "amazon.in",
+    "flipkart.com",
+    "ebay.com",
+    "etsy.com",
+  ],
+  Other: [],
+};
+
+function classifyDomain(domain: string): WebsiteCategory {
+  const normalized = domain.toLowerCase().replace(/^www\./, "");
+
+  for (const category of CATEGORIES) {
+    if (
+      CATEGORY_DOMAINS[category].some(
+        candidate =>
+          normalized === candidate ||
+          normalized.endsWith(`.${candidate}`)
+      )
+    ) {
+      return category;
+    }
+  }
+
+  return "Other";
+}
+
+function getDefaultType(
+  category: WebsiteCategory
+): "productive" | "distraction" | "neutral" {
+  if (
+    ["Development", "Education", "Productivity"].includes(category)
+  ) {
+    return "productive";
+  }
+
+  if (["Social Media", "Entertainment"].includes(category)) {
+    return "distraction";
+  }
+
+  return "neutral";
+}
 
 function sendToExtension(message: object): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -30,7 +159,7 @@ function sendToExtension(message: object): Promise<any> {
       return;
     }
 
-    chrome.runtime.sendMessage(message, (response) => {
+    chrome.runtime.sendMessage(message, response => {
       const error = chrome.runtime.lastError;
 
       if (error) {
@@ -49,16 +178,16 @@ async function database() {
       if (!db.objectStoreNames.contains("activities")) {
         const store = db.createObjectStore("activities", {
           keyPath: "id",
-          autoIncrement: true
+          autoIncrement: true,
         });
         store.createIndex("startedAt", "startedAt");
       }
-    }
+    },
   });
 }
 
 function formatDuration(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
@@ -69,10 +198,16 @@ function formatDuration(ms: number): string {
 }
 
 function isToday(timestamp: number): boolean {
-  const date = new Date(timestamp);
-  const today = new Date();
+  return new Date(timestamp).toDateString() === new Date().toDateString();
+}
 
-  return date.toDateString() === today.toDateString();
+function readOverrides(): Record<string, WebsiteCategory> {
+  try {
+    const raw = localStorage.getItem(OVERRIDES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
 }
 
 export default function App() {
@@ -80,43 +215,34 @@ export default function App() {
   const [enabled, setEnabled] = useState(true);
   const [extensionAvailable, setExtensionAvailable] = useState(false);
   const [error, setError] = useState("");
+  const [overrides, setOverrides] =
+    useState<Record<string, WebsiteCategory>>(readOverrides);
 
   const refresh = useCallback(async () => {
-  try {
-    if (!("chrome" in window) || !chrome.runtime?.sendMessage) {
-      setExtensionAvailable(false);
-      setError("BrowseLens extension is not connected.");
-      return;
+    try {
+      if (!globalThis.chrome?.runtime?.sendMessage) {
+        setExtensionAvailable(false);
+        setError("BrowseLens extension is not connected.");
+        return;
+      }
+
+      const response = await sendToExtension({ type: "GET_ACTIVITIES" });
+
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+
+      setActivities(response?.activities ?? []);
+      setError("");
+    } catch (err) {
+      console.error("BrowseLens refresh failed:", err);
+      setError("Could not retrieve activity. Reload the extension and dashboard.");
     }
-
-    const response = await sendToExtension({
-  type: "GET_ACTIVITIES"
-});
-
-    if (response?.error) {
-      throw new Error(response.error);
-    }
-
-    setActivities(response?.activities ?? []);
-    setError("");
-  } catch (error) {
-    console.error("BrowseLens refresh failed:", error);
-    setError(
-      "Could not retrieve activity. Reload the extension and dashboard."
-    );
-  }
-}, []);
+  }, []);
 
   const readStatus = useCallback(async () => {
-    if (!("chrome" in window) || !chrome.runtime?.sendMessage) {
-      setExtensionAvailable(false);
-      return;
-    }
-
     try {
-     const status = await sendToExtension({
-  type: "GET_STATUS"
-});
+      const status = await sendToExtension({ type: "GET_STATUS" });
       setEnabled(status?.enabled !== false);
       setExtensionAvailable(true);
     } catch {
@@ -136,14 +262,78 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [refresh, readStatus]);
 
+  function changeCategory(domain: string, category: WebsiteCategory) {
+    const updated = { ...overrides, [domain]: category };
+    setOverrides(updated);
+    localStorage.setItem(OVERRIDES_KEY, JSON.stringify(updated));
+  }
+
+  function categoryFor(row: ActivityRecord): WebsiteCategory {
+    return overrides[row.domain] ?? row.category ?? classifyDomain(row.domain);
+  }
+
+  const today = useMemo(
+    () => activities.filter(row => isToday(row.startedAt)),
+    [activities]
+  );
+
+  const todayDuration = today.reduce((sum, row) => sum + row.durationMs, 0);
+  const uniqueDomains = new Set(today.map(row => row.domain)).size;
+
+  const analytics = useMemo(() => {
+    const totals = new Map<WebsiteCategory, number>();
+    let productiveMs = 0;
+    let distractionMs = 0;
+    let neutralMs = 0;
+
+    for (const row of today) {
+      const category = categoryFor(row);
+      totals.set(category, (totals.get(category) ?? 0) + row.durationMs);
+
+      const type = getDefaultType(category);
+      if (type === "productive") productiveMs += row.durationMs;
+      else if (type === "distraction") distractionMs += row.durationMs;
+      else neutralMs += row.durationMs;
+    }
+
+    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+
+    let contextSwitches = 0;
+    const sortedSessions = [...today].sort((a, b) => a.startedAt - b.startedAt);
+
+    for (let i = 1; i < sortedSessions.length; i++) {
+      const previous = sortedSessions[i - 1];
+      const current = sortedSessions[i];
+      if (!previous || !current) continue;
+
+      const gap = current.startedAt - previous.endedAt;
+      if (
+        previous.domain !== current.domain &&
+        gap >= 0 &&
+        gap <= 30 * 60 * 1000
+      ) {
+        contextSwitches++;
+      }
+    }
+
+    return {
+      productiveMs,
+      distractionMs,
+      neutralMs,
+      contextSwitches,
+      categories: sorted,
+    };
+  }, [today, overrides]);
+
   async function toggleTracking() {
     try {
       const response = await sendToExtension({
-  type: "SET_TRACKING",
-  enabled: !enabled
-});
+        type: "SET_TRACKING",
+        enabled: !enabled,
+      });
 
       setEnabled(response.enabled);
+      setError("");
     } catch {
       setError("Extension not connected. Reload it in chrome://extensions.");
     }
@@ -152,16 +342,23 @@ export default function App() {
   async function clearHistory() {
     if (!window.confirm("Delete all BrowseLens activity history?")) return;
 
-    const db = await database();
-    await db.clear("activities");
-    await db.close();
-
-    await refresh();
+    try {
+      const db = await database();
+      await db.clear("activities");
+      await db.close();
+      await refresh();
+    } catch (err) {
+      console.error("Could not clear BrowseLens history:", err);
+      setError("Could not clear history. Please try again.");
+    }
   }
 
-  const today = activities.filter(row => isToday(row.startedAt));
-  const todayDuration = today.reduce((sum, row) => sum + row.durationMs, 0);
-  const uniqueDomains = new Set(today.map(row => row.domain)).size;
+  const productivePercent = todayDuration
+    ? (analytics.productiveMs / todayDuration) * 100
+    : 0;
+  const distractionPercent = todayDuration
+    ? (analytics.distractionMs / todayDuration) * 100
+    : 0;
 
   return (
     <main className="page">
@@ -181,17 +378,16 @@ export default function App() {
 
       {!extensionAvailable && (
         <section className="notice">
-          Dashboard storage is local. Load the extension in Chrome to enable
-          live tracking controls.
+          Open the packaged BrowseLens dashboard in Chrome to use tracking controls.
         </section>
       )}
 
       {error && <section className="notice error">{error}</section>}
 
       <section className="welcome">
-        <p className="eyebrow">PHASE 1 · BROWSER ACTIVITY</p>
+        <p className="eyebrow">PHASE 2 · CLASSIFICATION & ANALYTICS</p>
         <h2>Your browsing, made visible.</h2>
-        <p>Only website domains and time intervals are stored.</p>
+        <p>Website categories and time analytics are calculated locally.</p>
         <button
           className="primary-button"
           onClick={toggleTracking}
@@ -220,6 +416,67 @@ export default function App() {
         </article>
       </section>
 
+      <section className="history phase2-panel">
+        <div className="section-heading">
+          <div>
+            <h2><TrendingUp size={19} /> Today's analytics</h2>
+            <p>Based on your completed sessions</p>
+          </div>
+        </div>
+
+        <div className="analytics-grid">
+          <article className="analytics-card">
+            <span>Productive time</span>
+            <strong>{formatDuration(analytics.productiveMs)}</strong>
+            <div className="progress-track">
+              <div className="progress-fill productive-fill" style={{ width: `${productivePercent}%` }} />
+            </div>
+            <small>{productivePercent.toFixed(0)}% of tracked time</small>
+          </article>
+
+          <article className="analytics-card">
+            <span>Distraction time</span>
+            <strong>{formatDuration(analytics.distractionMs)}</strong>
+            <div className="progress-track">
+              <div className="progress-fill distraction-fill" style={{ width: `${distractionPercent}%` }} />
+            </div>
+            <small>{distractionPercent.toFixed(0)}% of tracked time</small>
+          </article>
+
+          <article className="analytics-card">
+            <Repeat2 size={18} />
+            <span>Context switches</span>
+            <strong>{analytics.contextSwitches}</strong>
+            <small>Between recorded website sessions</small>
+          </article>
+        </div>
+
+        <h3 className="analytics-subheading"><Tags size={17} /> Time by category</h3>
+        {analytics.categories.length === 0 ? (
+          <p className="muted">Browse some websites to see your category breakdown.</p>
+        ) : (
+          <div className="category-list">
+            {analytics.categories.map(([category, duration]) => (
+              <div className="category-item" key={category}>
+                <span>{category}</span>
+                <div className="progress-track">
+                  <div
+                    className="progress-fill category-fill"
+                    style={{ width: `${todayDuration ? (duration / todayDuration) * 100 : 0}%` }}
+                  />
+                </div>
+                <strong>{formatDuration(duration)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="analytics-note">
+          Categories are estimates. “Productive” and “distraction” are default groupings,
+          and can be adjusted per website below.
+        </p>
+      </section>
+
       <section className="history">
         <div className="section-heading">
           <div>
@@ -239,22 +496,39 @@ export default function App() {
           </div>
         ) : (
           <div className="activity-list">
-            {activities.slice(0, 50).map((row, index) => (
-              <article className="activity-row" key={row.id ?? index}>
-                <div className="site-icon">{row.domain.charAt(0).toUpperCase()}</div>
-                <div className="site-info">
-                  <strong>{row.domain}</strong>
-                  <span>{new Date(row.startedAt).toLocaleString()}</span>
-                </div>
-                <span className="duration">{formatDuration(row.durationMs)}</span>
-              </article>
-            ))}
+            {activities.slice(0, 50).map((row, index) => {
+              const category = categoryFor(row);
+
+              return (
+                <article className="activity-row" key={row.id ?? index}>
+                  <div className="site-icon">{row.domain.charAt(0).toUpperCase()}</div>
+                  <div className="site-info">
+                    <strong>{row.domain}</strong>
+                    <span>{new Date(row.startedAt).toLocaleString()}</span>
+                    <span className="category-label">{category}</span>
+                    <select
+                      aria-label={`Category for ${row.domain}`}
+                      className="category-select"
+                      value={category}
+                      onChange={event =>
+                        changeCategory(row.domain, event.target.value as WebsiteCategory)
+                      }
+                    >
+                      {CATEGORIES.map(option => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="duration">{formatDuration(row.durationMs)}</span>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
 
       <footer>
-        BrowseLens · Local-first by design · Phase 1 foundation
+        BrowseLens · Local-first by design · Phase 2
       </footer>
     </main>
   );
