@@ -2,6 +2,8 @@
 import {
   classifyDomain,
   getCategoryType,
+  type WebsiteCategory,
+  type CategoryType,
 } from "./classification";
 
 export type FocusMode = "off" | "study" | "work";
@@ -15,19 +17,27 @@ export interface FocusSettings {
 
 const SETTINGS_KEY = "browselens_focus_settings";
 const LAST_ALERT_KEY = "browselens_last_focus_alert";
+const SNOOZE_KEY = "browselens_focus_snooze";
+const RULES_KEY = "browselens_productivity_rules";
 
-export const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+const NOTIFICATION_ID = "browselens-focus-alert";
+
+export const DEFAULT_SETTINGS: FocusSettings = {
   mode: "off",
   thresholdMinutes: 10,
   cooldownMinutes: 15,
   excludedDomains: [],
 };
 
+type ProductivityRules = Partial<
+  Record<WebsiteCategory, CategoryType>
+>;
+
 export async function getFocusSettings(): Promise<FocusSettings> {
   const data = await chrome.storage.local.get(SETTINGS_KEY);
 
   return {
-    ...DEFAULT_FOCUS_SETTINGS,
+    ...DEFAULT_SETTINGS,
     ...(data[SETTINGS_KEY] ?? {}),
   };
 }
@@ -37,7 +47,7 @@ export async function updateFocusSettings(
 ): Promise<FocusSettings> {
   const current = await getFocusSettings();
 
-  const updated: FocusSettings = {
+  const updated = {
     ...current,
     ...updates,
   };
@@ -47,6 +57,19 @@ export async function updateFocusSettings(
   });
 
   return updated;
+}
+
+export async function updateProductivityRules(
+  rules: ProductivityRules
+): Promise<void> {
+  await chrome.storage.local.set({
+    [RULES_KEY]: rules,
+  });
+}
+
+export async function getProductivityRules(): Promise<ProductivityRules> {
+  const data = await chrome.storage.local.get(RULES_KEY);
+  return data[RULES_KEY] ?? {};
 }
 
 function isExcluded(
@@ -63,52 +86,55 @@ function isExcluded(
   });
 }
 
+export async function snoozeFocus(minutes: number): Promise<number> {
+  const snoozeUntil = Date.now() + minutes * 60 * 1000;
+
+  await chrome.storage.local.set({
+    [SNOOZE_KEY]: snoozeUntil,
+  });
+
+  await chrome.notifications.clear(NOTIFICATION_ID);
+
+  return snoozeUntil;
+}
+
 export async function checkFocusDistraction(
   domain: string,
   startedAt: number
 ): Promise<void> {
   const settings = await getFocusSettings();
 
-  console.log("[Focus Guardian] Settings:", settings);
+  if (settings.mode === "off") return;
 
-  if (settings.mode === "off") {
-    console.log("[Focus Guardian] Mode is off");
-    return;
-  }
-
-  if (isExcluded(domain, settings.excludedDomains)) {
-    console.log("[Focus Guardian] Excluded domain:", domain);
-    return;
-  }
+  if (isExcluded(domain, settings.excludedDomains)) return;
 
   const category = classifyDomain(domain);
-  const categoryType = getCategoryType(category);
 
-  console.log("[Focus Guardian] Domain:", domain);
-  console.log("[Focus Guardian] Category:", category);
-  console.log("[Focus Guardian] Category type:", categoryType);
+  const rules = await getProductivityRules();
 
-  if (categoryType !== "distraction") {
-    console.log("[Focus Guardian] Not a distracting website");
-    return;
-  }
+  const categoryType =
+    rules[category] ?? getCategoryType(category);
 
-  const elapsedMinutes =
-    (Date.now() - startedAt) / 60000;
+  if (categoryType !== "distraction") return;
 
-  console.log(
-    "[Focus Guardian] Elapsed:",
-    elapsedMinutes.toFixed(2),
-    "minutes"
-  );
+  const now = Date.now();
 
-  if (elapsedMinutes < settings.thresholdMinutes) {
-    console.log("[Focus Guardian] Threshold not reached");
-    return;
-  }
+  // Check snooze.
+  const data = await chrome.storage.local.get([
+    SNOOZE_KEY,
+    LAST_ALERT_KEY,
+  ]);
 
-  const data = await chrome.storage.local.get(LAST_ALERT_KEY);
+  const snoozeUntil = Number(data[SNOOZE_KEY] ?? 0);
 
+  if (now < snoozeUntil) return;
+
+  // Check threshold.
+  const elapsedMinutes = (now - startedAt) / 60000;
+
+  if (elapsedMinutes < settings.thresholdMinutes) return;
+
+  // Check cooldown.
   const lastAlert = data[LAST_ALERT_KEY] as
     | { domain: string; timestamp: number }
     | undefined;
@@ -116,39 +142,61 @@ export async function checkFocusDistraction(
   if (
     lastAlert &&
     lastAlert.domain === domain &&
-    Date.now() - lastAlert.timestamp <
+    now - lastAlert.timestamp <
       settings.cooldownMinutes * 60000
   ) {
-    console.log("[Focus Guardian] Cooldown active");
     return;
   }
 
   try {
-    const notificationId = await chrome.notifications.create({
+    await chrome.notifications.clear(NOTIFICATION_ID);
+
+    await chrome.notifications.create(NOTIFICATION_ID, {
       type: "basic",
       iconUrl: chrome.runtime.getURL("icons/icon128.png"),
       title: "BrowseLens Focus Guardian",
       message:
         `You've spent ${Math.floor(elapsedMinutes)} minutes on ${domain}. ` +
-        `Get back to your ${settings.mode} session!`,
+        `Time to return to your ${settings.mode} session?`,
       priority: 2,
+      buttons: [
+        { title: "Back to work" },
+        { title: "Snooze 10 min" },
+      ],
     });
-
-    console.log(
-      "[Focus Guardian] Notification created:",
-      notificationId
-    );
 
     await chrome.storage.local.set({
       [LAST_ALERT_KEY]: {
         domain,
-        timestamp: Date.now(),
+        timestamp: now,
       },
     });
+
+    console.log("[Focus Guardian] Notification created.");
   } catch (error) {
-    console.error(
-      "[Focus Guardian] Notification failed:",
-      error
-    );
+    console.error("[Focus Guardian] Notification error:", error);
   }
 }
+
+// Handle notification button clicks.
+chrome.notifications.onButtonClicked.addListener(
+  (notificationId, buttonIndex) => {
+    if (notificationId !== NOTIFICATION_ID) return;
+
+    if (buttonIndex === 0) {
+      // Acknowledge the alert.
+      void chrome.notifications.clear(NOTIFICATION_ID);
+    }
+
+    if (buttonIndex === 1) {
+      void snoozeFocus(10);
+    }
+  }
+);
+
+// Clicking the notification itself acknowledges it.
+chrome.notifications.onClicked.addListener(notificationId => {
+  if (notificationId === NOTIFICATION_ID) {
+    void chrome.notifications.clear(NOTIFICATION_ID);
+  }
+});

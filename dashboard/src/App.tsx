@@ -1,5 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+
 import {
   Activity,
   Clock,
@@ -11,9 +12,10 @@ import {
   Repeat2,
   TrendingUp,
 } from "lucide-react";
-import { openDB, type DBSchema } from "idb";
-import FocusGuardian from "./FocusGuardian";
 
+import { openDB, type DBSchema } from "idb";
+
+import FocusGuardian from "./FocusGuardian";
 import CategoryManager from "./CategoryManager";
 
 import {
@@ -26,6 +28,10 @@ import {
   type WebsiteCategory,
   type ProductivityType,
 } from "./preferences";
+
+// --------------------------------------------------
+// TYPES
+// --------------------------------------------------
 
 export interface ActivityRecord {
   id?: number;
@@ -40,12 +46,21 @@ interface BrowseLensDB extends DBSchema {
   activities: {
     key: number;
     value: ActivityRecord;
-    indexes: { startedAt: number };
+    indexes: {
+      startedAt: number;
+    };
   };
 }
 
+// --------------------------------------------------
+// CONSTANTS
+// --------------------------------------------------
+
 const DB_NAME = "BrowseLensDB";
-const OVERRIDES_KEY = "browselens_category_overrides";
+
+// --------------------------------------------------
+// WEBSITE CLASSIFICATION
+// --------------------------------------------------
 
 const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
   Development: [
@@ -58,6 +73,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "docker.com",
     "nodejs.org",
   ],
+
   Education: [
     "sporcle.com",
     "coursera.org",
@@ -68,6 +84,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "leetcode.com",
     "geeksforgeeks.org",
   ],
+
   Productivity: [
     "notion.so",
     "trello.com",
@@ -77,6 +94,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "figma.com",
     "linear.app",
   ],
+
   "Social Media": [
     "instagram.com",
     "facebook.com",
@@ -86,6 +104,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "threads.net",
     "linkedin.com",
   ],
+
   Entertainment: [
     "youtube.com",
     "netflix.com",
@@ -93,6 +112,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "spotify.com",
     "pinterest.com",
   ],
+
   News: [
     "bbc.com",
     "bbc.co.uk",
@@ -101,6 +121,7 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "cnn.com",
     "nytimes.com",
   ],
+
   Shopping: [
     "amazon.com",
     "amazon.in",
@@ -108,11 +129,14 @@ const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
     "ebay.com",
     "etsy.com",
   ],
+
   Other: [],
 };
 
 function classifyDomain(domain: string): WebsiteCategory {
-  const normalized = domain.toLowerCase().replace(/^www\./, "");
+  const normalized = domain
+    .toLowerCase()
+    .replace(/^www\./, "");
 
   for (const category of CATEGORIES) {
     if (
@@ -129,26 +153,50 @@ function classifyDomain(domain: string): WebsiteCategory {
   return "Other";
 }
 
+// --------------------------------------------------
+// DEFAULT PRODUCTIVITY CLASSIFICATION
+// --------------------------------------------------
+
 function getDefaultType(
   category: WebsiteCategory
-): "productive" | "distraction" | "neutral" {
+): ProductivityType {
   if (
     ["Development", "Education", "Productivity"].includes(category)
   ) {
     return "productive";
   }
 
-  if (["Social Media", "Entertainment"].includes(category)) {
+  if (
+    ["Social Media", "Entertainment"].includes(category)
+  ) {
     return "distraction";
   }
 
   return "neutral";
 }
 
+function getDefaultProductivityRules(): Record<
+  WebsiteCategory,
+  ProductivityType
+> {
+  return Object.fromEntries(
+    CATEGORIES.map(category => [
+      category,
+      getDefaultType(category),
+    ])
+  ) as Record<WebsiteCategory, ProductivityType>;
+}
+
+// --------------------------------------------------
+// EXTENSION COMMUNICATION
+// --------------------------------------------------
+
 function sendToExtension(message: object): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!globalThis.chrome?.runtime?.sendMessage) {
-      reject(new Error("BrowseLens extension API is unavailable."));
+      reject(
+        new Error("BrowseLens extension API is unavailable.")
+      );
       return;
     }
 
@@ -165,6 +213,10 @@ function sendToExtension(message: object): Promise<any> {
   });
 }
 
+// --------------------------------------------------
+// INDEXEDDB
+// --------------------------------------------------
+
 async function database() {
   return openDB<BrowseLensDB>(DB_NAME, 1, {
     upgrade(db) {
@@ -173,43 +225,67 @@ async function database() {
           keyPath: "id",
           autoIncrement: true,
         });
+
         store.createIndex("startedAt", "startedAt");
       }
     },
   });
 }
 
+// --------------------------------------------------
+// FORMATTING HELPERS
+// --------------------------------------------------
+
 function formatDuration(ms: number): string {
-  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const totalSeconds = Math.floor(
+    Math.max(0, ms) / 1000
+  );
+
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
-  if (minutes < 1) return `${seconds}s`;
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  if (minutes < 1) {
+    return `${seconds}s`;
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m ${seconds}s`;
+  }
 
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 function isToday(timestamp: number): boolean {
-  return new Date(timestamp).toDateString() === new Date().toDateString();
+  return (
+    new Date(timestamp).toDateString() ===
+    new Date().toDateString()
+  );
 }
 
-function readOverrides(): Record<string, WebsiteCategory> {
-  try {
-    const raw = localStorage.getItem(OVERRIDES_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
+// --------------------------------------------------
+// MAIN APP
+// --------------------------------------------------
 
 export default function App() {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
+
   const [enabled, setEnabled] = useState(true);
-  const [extensionAvailable, setExtensionAvailable] = useState(false);
+
+  const [extensionAvailable, setExtensionAvailable] =
+    useState(false);
+
   const [error, setError] = useState("");
-  const [overrides, setOverrides] = useState(loadCategoryOverrides);
-  const [productivityRules, setProductivityRules] = useState(loadProductivityRules);
+
+  const [overrides, setOverrides] = useState(
+    loadCategoryOverrides
+  );
+
+  const [productivityRules, setProductivityRules] =
+    useState(loadProductivityRules);
+
+  // ------------------------------------------------
+  // REFRESH ACTIVITIES
+  // ------------------------------------------------
 
   const refresh = useCallback(async () => {
     try {
@@ -219,7 +295,9 @@ export default function App() {
         return;
       }
 
-      const response = await sendToExtension({ type: "GET_ACTIVITIES" });
+      const response = await sendToExtension({
+        type: "GET_ACTIVITIES",
+      });
 
       if (response?.error) {
         throw new Error(response.error);
@@ -229,13 +307,23 @@ export default function App() {
       setError("");
     } catch (err) {
       console.error("BrowseLens refresh failed:", err);
-      setError("Could not retrieve activity. Reload the extension and dashboard.");
+
+      setError(
+        "Could not retrieve activity. Reload the extension and dashboard."
+      );
     }
   }, []);
 
+  // ------------------------------------------------
+  // READ TRACKING STATUS
+  // ------------------------------------------------
+
   const readStatus = useCallback(async () => {
     try {
-      const status = await sendToExtension({ type: "GET_STATUS" });
+      const status = await sendToExtension({
+        type: "GET_STATUS",
+      });
+
       setEnabled(status?.enabled !== false);
       setExtensionAvailable(true);
     } catch {
@@ -243,89 +331,183 @@ export default function App() {
     }
   }, []);
 
+  // ------------------------------------------------
+  // INITIALIZATION AND POLLING
+  // ------------------------------------------------
+
   useEffect(() => {
     void refresh();
     void readStatus();
+
+    // Synchronize productivity rules with the extension.
+    void sendToExtension({
+      type: "SET_PRODUCTIVITY_RULES",
+      rules: loadProductivityRules(),
+    }).catch(console.error);
 
     const interval = window.setInterval(() => {
       void refresh();
       void readStatus();
     }, 3000);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [refresh, readStatus]);
 
-  function changeCategory(domain: string, category: WebsiteCategory) {
-    const updated = { ...overrides, [domain]: category };
-    setOverrides(updated);
-    localStorage.setItem(OVERRIDES_KEY, JSON.stringify(updated));
+  // ------------------------------------------------
+  // CATEGORY HELPERS
+  // ------------------------------------------------
+
+  function categoryFor(
+    row: ActivityRecord
+  ): WebsiteCategory {
+    return (
+      overrides[row.domain] ??
+      row.category ??
+      classifyDomain(row.domain)
+    );
   }
 
-  function categoryFor(row: ActivityRecord): WebsiteCategory {
-    return overrides[row.domain] ?? row.category ?? classifyDomain(row.domain);
-    }
-
+  // Update website category override.
   function handleCategoryChange(
-  domain: string,
-  category: WebsiteCategory,
-) {
-  const updated = { ...overrides, [domain]: category };
-  setOverrides(updated);
-  saveCategoryOverrides(updated);
-}
+    domain: string,
+    category: WebsiteCategory
+  ) {
+    const updated = {
+      ...overrides,
+      [domain]: category,
+    };
 
-function handleRuleChange(
-  category: WebsiteCategory,
-  type: ProductivityType,
-) {
-  const updated = { ...productivityRules, [category]: type };
-  setProductivityRules(updated);
-  saveProductivityRules(updated);
-}
+    setOverrides(updated);
+    saveCategoryOverrides(updated);
+  }
 
-function handleResetCategory(domain: string) {
-  const updated = { ...overrides };
-  delete updated[domain];
-  setOverrides(updated);
-  resetCategoryOverride(domain);
-}
+  // ------------------------------------------------
+  // PRODUCTIVITY RULES
+  // ------------------------------------------------
+
+  async function handleRuleChange(
+    category: WebsiteCategory,
+    type: ProductivityType
+  ) {
+    const updated = {
+      ...productivityRules,
+      [category]: type,
+    };
+
+    setProductivityRules(updated);
+    saveProductivityRules(updated);
+
+    try {
+      await sendToExtension({
+        type: "SET_PRODUCTIVITY_RULES",
+        rules: updated,
+      });
+
+      setError("");
+    } catch (err) {
+      console.error(
+        "Could not synchronize productivity rules:",
+        err
+      );
+
+      setError(
+        "Could not synchronize productivity rules with the extension."
+      );
+    }
+  }
+
+  // ------------------------------------------------
+  // RESET CATEGORY OVERRIDE
+  // ------------------------------------------------
+
+  function handleResetCategory(domain: string) {
+    const updated = { ...overrides };
+
+    delete updated[domain];
+
+    setOverrides(updated);
+    resetCategoryOverride(domain);
+  }
+
+  // ------------------------------------------------
+  // TODAY'S ACTIVITIES
+  // ------------------------------------------------
 
   const today = useMemo(
-    () => activities.filter(row => isToday(row.startedAt)),
+    () =>
+      activities.filter(row =>
+        isToday(row.startedAt)
+      ),
     [activities]
   );
 
-  const todayDuration = today.reduce((sum, row) => sum + row.durationMs, 0);
-  const uniqueDomains = new Set(today.map(row => row.domain)).size;
+  const todayDuration = today.reduce(
+    (sum, row) => sum + row.durationMs,
+    0
+  );
+
+  const uniqueDomains = new Set(
+    today.map(row => row.domain)
+  ).size;
+
+  // ------------------------------------------------
+  // ANALYTICS
+  // ------------------------------------------------
 
   const analytics = useMemo(() => {
     const totals = new Map<WebsiteCategory, number>();
+
     let productiveMs = 0;
     let distractionMs = 0;
     let neutralMs = 0;
 
     for (const row of today) {
       const category = categoryFor(row);
-      totals.set(category, (totals.get(category) ?? 0) + row.durationMs);
 
-      const type = productivityRules[category];
+      totals.set(
+        category,
+        (totals.get(category) ?? 0) + row.durationMs
+      );
 
-        if (type === "productive") productiveMs += row.durationMs;
-        else if (type === "distraction") distractionMs += row.durationMs;
-        else neutralMs += row.durationMs;
+      // Apply custom rule or default classification.
+      const type =
+        productivityRules[category] ??
+        getDefaultType(category);
+
+      if (type === "productive") {
+        productiveMs += row.durationMs;
+      } else if (type === "distraction") {
+        distractionMs += row.durationMs;
+      } else {
+        neutralMs += row.durationMs;
+      }
     }
 
-    const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+    const sorted = [...totals.entries()].sort(
+      (a, b) => b[1] - a[1]
+    );
 
+    // Approximate context switches between recorded sessions.
     let contextSwitches = 0;
-    const sortedSessions = [...today].sort((a, b) => a.startedAt - b.startedAt);
 
-    for (let i = 1; i < sortedSessions.length; i++) {
+    const sortedSessions = [...today].sort(
+      (a, b) => a.startedAt - b.startedAt
+    );
+
+    for (
+      let i = 1;
+      i < sortedSessions.length;
+      i++
+    ) {
       const previous = sortedSessions[i - 1];
       const current = sortedSessions[i];
+
       if (!previous || !current) continue;
 
       const gap = current.startedAt - previous.endedAt;
+
       if (
         previous.domain !== current.domain &&
         gap >= 0 &&
@@ -344,6 +526,50 @@ function handleResetCategory(domain: string) {
     };
   }, [today, overrides, productivityRules]);
 
+  // ------------------------------------------------
+  // DELETE ALL BROWSELENS DATA
+  // ------------------------------------------------
+
+  async function clearAllBrowseLensData() {
+    // Clear IndexedDB activity history.
+    const db = await database();
+
+    try {
+      await db.clear("activities");
+    } finally {
+      db.close();
+    }
+
+    // Create complete default productivity rules.
+    const defaultRules = getDefaultProductivityRules();
+
+    // Reset dashboard preferences.
+    saveCategoryOverrides({});
+    saveProductivityRules(defaultRules);
+
+    // Clear extension storage.
+    const response = await sendToExtension({
+      type: "CLEAR_ALL_DATA",
+    });
+
+    if (!response?.success) {
+      throw new Error(
+        "Extension could not clear its local data."
+      );
+    }
+
+    // Reset React state.
+    setActivities([]);
+    setOverrides({});
+    setProductivityRules(defaultRules);
+    setEnabled(true);
+    setError("");
+  }
+
+  // ------------------------------------------------
+  // TRACKING CONTROLS
+  // ------------------------------------------------
+
   async function toggleTracking() {
     try {
       const response = await sendToExtension({
@@ -354,70 +580,140 @@ function handleResetCategory(domain: string) {
       setEnabled(response.enabled);
       setError("");
     } catch {
-      setError("Extension not connected. Reload it in chrome://extensions.");
+      setError(
+        "Extension not connected. Reload it in chrome://extensions."
+      );
     }
   }
 
+  // ------------------------------------------------
+  // CLEAR ACTIVITY HISTORY
+  // ------------------------------------------------
+
   async function clearHistory() {
-    if (!window.confirm("Delete all BrowseLens activity history?")) return;
+    if (
+      !window.confirm(
+        "Delete all BrowseLens activity history?"
+      )
+    ) {
+      return;
+    }
 
     try {
       const db = await database();
-      await db.clear("activities");
-      await db.close();
+
+      try {
+        await db.clear("activities");
+      } finally {
+        db.close();
+      }
+
       await refresh();
     } catch (err) {
-      console.error("Could not clear BrowseLens history:", err);
-      setError("Could not clear history. Please try again.");
+      console.error(
+        "Could not clear BrowseLens history:",
+        err
+      );
+
+      setError(
+        "Could not clear history. Please try again."
+      );
     }
   }
+
+  // ------------------------------------------------
+  // ANALYTICS PERCENTAGES
+  // ------------------------------------------------
 
   const productivePercent = todayDuration
     ? (analytics.productiveMs / todayDuration) * 100
     : 0;
+
   const distractionPercent = todayDuration
     ? (analytics.distractionMs / todayDuration) * 100
     : 0;
 
+  // ------------------------------------------------
+  // RENDER
+  // ------------------------------------------------
+
   return (
     <main className="page">
+
+      {/* HEADER */}
+
       <header className="header">
         <div className="brand">
-          <div className="brand-icon"><Activity size={24} /></div>
+          <div className="brand-icon">
+            <Activity size={24} />
+          </div>
+
           <div>
             <h1>BrowseLens</h1>
             <p>Understand your browsing habits.</p>
           </div>
         </div>
 
-        <span className={`status ${enabled ? "on" : "off"}`}>
+        <span
+          className={`status ${enabled ? "on" : "off"}`}
+        >
           {enabled ? "Tracking on" : "Tracking paused"}
         </span>
       </header>
 
+      {/* EXTENSION STATUS */}
+
       {!extensionAvailable && (
         <section className="notice">
-          Open the packaged BrowseLens dashboard in Chrome to use tracking controls.
+          Open the packaged BrowseLens dashboard in Chrome
+          to use tracking controls.
         </section>
       )}
 
-      {error && <section className="notice error">{error}</section>}
+      {error && (
+        <section className="notice error">
+          {error}
+        </section>
+      )}
+
+      {/* WELCOME */}
 
       <section className="welcome">
-        <p className="eyebrow">PHASE 2 · CLASSIFICATION & ANALYTICS</p>
+        <p className="eyebrow">
+          PHASE 3 · FOCUS GUARDIAN & PRIVACY
+        </p>
+
         <h2>Your browsing, made visible.</h2>
-        <p>Website categories and time analytics are calculated locally.</p>
+
+        <p>
+          Website categories, focus monitoring and time
+          analytics are calculated locally.
+        </p>
+
         <button
           className="primary-button"
           onClick={toggleTracking}
           disabled={!extensionAvailable}
         >
-          {enabled ? <Pause size={17} /> : <Play size={17} />}
-          {enabled ? "Pause tracking" : "Resume tracking"}
+          {enabled ? (
+            <Pause size={17} />
+          ) : (
+            <Play size={17} />
+          )}
+
+          {enabled
+            ? "Pause tracking"
+            : "Resume tracking"}
         </button>
       </section>
 
-      <FocusGuardian />
+      {/* FOCUS GUARDIAN */}
+
+      <FocusGuardian
+        onClearAllData={clearAllBrowseLensData}
+      />
+
+      {/* STATISTICS */}
 
       <section className="stats">
         <article className="stat-card">
@@ -425,11 +721,13 @@ function handleResetCategory(domain: string) {
           <p>Tracked today</p>
           <strong>{formatDuration(todayDuration)}</strong>
         </article>
+
         <article className="stat-card">
           <Globe size={21} />
           <p>Websites today</p>
           <strong>{uniqueDomains}</strong>
         </article>
+
         <article className="stat-card">
           <Activity size={21} />
           <p>Recorded sessions</p>
@@ -437,68 +735,133 @@ function handleResetCategory(domain: string) {
         </article>
       </section>
 
+      {/* TODAY'S ANALYTICS */}
+
       <section className="history phase2-panel">
         <div className="section-heading">
           <div>
-            <h2><TrendingUp size={19} /> Today's analytics</h2>
+            <h2>
+              <TrendingUp size={19} />
+              Today's analytics
+            </h2>
+
             <p>Based on your completed sessions</p>
           </div>
         </div>
 
         <div className="analytics-grid">
+
           <article className="analytics-card">
             <span>Productive time</span>
-            <strong>{formatDuration(analytics.productiveMs)}</strong>
+
+            <strong>
+              {formatDuration(analytics.productiveMs)}
+            </strong>
+
             <div className="progress-track">
-              <div className="progress-fill productive-fill" style={{ width: `${productivePercent}%` }} />
+              <div
+                className="progress-fill productive-fill"
+                style={{
+                  width: `${productivePercent}%`,
+                }}
+              />
             </div>
-            <small>{productivePercent.toFixed(0)}% of tracked time</small>
+
+            <small>
+              {productivePercent.toFixed(0)}% of tracked time
+            </small>
           </article>
 
           <article className="analytics-card">
             <span>Distraction time</span>
-            <strong>{formatDuration(analytics.distractionMs)}</strong>
+
+            <strong>
+              {formatDuration(analytics.distractionMs)}
+            </strong>
+
             <div className="progress-track">
-              <div className="progress-fill distraction-fill" style={{ width: `${distractionPercent}%` }} />
+              <div
+                className="progress-fill distraction-fill"
+                style={{
+                  width: `${distractionPercent}%`,
+                }}
+              />
             </div>
-            <small>{distractionPercent.toFixed(0)}% of tracked time</small>
+
+            <small>
+              {distractionPercent.toFixed(0)}% of tracked time
+            </small>
           </article>
 
           <article className="analytics-card">
             <Repeat2 size={18} />
+
             <span>Context switches</span>
-            <strong>{analytics.contextSwitches}</strong>
-            <small>Between recorded website sessions</small>
+
+            <strong>
+              {analytics.contextSwitches}
+            </strong>
+
+            <small>
+              Between recorded website sessions
+            </small>
           </article>
+
         </div>
 
-        <h3 className="analytics-subheading"><Tags size={17} /> Time by category</h3>
+        {/* CATEGORY BREAKDOWN */}
+
+        <h3 className="analytics-subheading">
+          <Tags size={17} />
+          Time by category
+        </h3>
+
         {analytics.categories.length === 0 ? (
-          <p className="muted">Browse some websites to see your category breakdown.</p>
+          <p className="muted">
+            Browse some websites to see your category breakdown.
+          </p>
         ) : (
           <div className="category-list">
-            {analytics.categories.map(([category, duration]) => (
-              <div className="category-item" key={category}>
-                <span>{category}</span>
-                <div className="progress-track">
-                  <div
-                    className="progress-fill category-fill"
-                    style={{ width: `${todayDuration ? (duration / todayDuration) * 100 : 0}%` }}
-                  />
+            {analytics.categories.map(
+              ([category, duration]) => (
+                <div
+                  className="category-item"
+                  key={category}
+                >
+                  <span>{category}</span>
+
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill category-fill"
+                      style={{
+                        width: `${
+                          todayDuration
+                            ? (duration / todayDuration) * 100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  <strong>
+                    {formatDuration(duration)}
+                  </strong>
                 </div>
-                <strong>{formatDuration(duration)}</strong>
-              </div>
-            ))}
+              )
+            )}
           </div>
         )}
 
         <p className="analytics-note">
-          Categories are estimates. “Productive” and “distraction” are default groupings,
-          and can be adjusted per website below.
+          Categories are estimates. Productive and
+          distraction classifications use default groupings
+          unless you customize them below.
         </p>
       </section>
 
-       <CategoryManager
+      {/* CATEGORY MANAGER */}
+
+      <CategoryManager
         activities={activities}
         overrides={overrides}
         rules={productivityRules}
@@ -507,59 +870,101 @@ function handleResetCategory(domain: string) {
         onResetCategory={handleResetCategory}
       />
 
+      {/* RECENT ACTIVITY */}
+
       <section className="history">
         <div className="section-heading">
           <div>
             <h2>Recent activity</h2>
             <p>Latest tracked website sessions</p>
           </div>
-          <button className="clear-button" onClick={clearHistory}>
-            <Trash2 size={16} /> Clear history
+
+          <button
+            className="clear-button"
+            onClick={clearHistory}
+          >
+            <Trash2 size={16} />
+            Clear history
           </button>
         </div>
 
         {activities.length === 0 ? (
           <div className="empty">
             <Globe size={32} />
+
             <h3>No activity recorded yet</h3>
-            <p>Browse a website in Chrome, then return here.</p>
+
+            <p>
+              Browse a website in Chrome, then return here.
+            </p>
           </div>
         ) : (
           <div className="activity-list">
-            {activities.slice(0, 50).map((row, index) => {
-              const category = categoryFor(row);
+            {activities.slice(0, 50).map(
+              (row, index) => {
+                const category = categoryFor(row);
 
-              return (
-                <article className="activity-row" key={row.id ?? index}>
-                  <div className="site-icon">{row.domain.charAt(0).toUpperCase()}</div>
-                  <div className="site-info">
-                    <strong>{row.domain}</strong>
-                    <span>{new Date(row.startedAt).toLocaleString()}</span>
-                    <span className="category-label">{category}</span>
-                    <select
-                      aria-label={`Category for ${row.domain}`}
-                      className="category-select"
-                      value={category}
-                      onChange={event =>
-                        changeCategory(row.domain, event.target.value as WebsiteCategory)
-                      }
-                    >
-                      {CATEGORIES.map(option => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="duration">{formatDuration(row.durationMs)}</span>
-                </article>
-              );
-            })}
+                return (
+                  <article
+                    className="activity-row"
+                    key={row.id ?? index}
+                  >
+                    <div className="site-icon">
+                      {row.domain.charAt(0).toUpperCase()}
+                    </div>
+
+                    <div className="site-info">
+                      <strong>{row.domain}</strong>
+
+                      <span>
+                        {new Date(
+                          row.startedAt
+                        ).toLocaleString()}
+                      </span>
+
+                      <span className="category-label">
+                        {category}
+                      </span>
+
+                      <select
+                        aria-label={`Category for ${row.domain}`}
+                        className="category-select"
+                        value={category}
+                        onChange={event =>
+                          handleCategoryChange(
+                            row.domain,
+                            event.target.value as WebsiteCategory
+                          )
+                        }
+                      >
+                        {CATEGORIES.map(option => (
+                          <option
+                            key={option}
+                            value={option}
+                          >
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <span className="duration">
+                      {formatDuration(row.durationMs)}
+                    </span>
+                  </article>
+                );
+              }
+            )}
           </div>
         )}
       </section>
 
+      {/* FOOTER */}
+
       <footer>
-        BrowseLens · Local-first by design · Phase 2
+        BrowseLens · Local-first by design · Phase 3
       </footer>
+
     </main>
   );
 }

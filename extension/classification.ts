@@ -88,22 +88,32 @@ export const CATEGORY_TYPE: Record<
   Other: "neutral",
 };
 
+
 function matchesDomain(
   domain: string,
   candidate: string
 ): boolean {
-  return domain === candidate || domain.endsWith(`.${candidate}`);
+  return (
+    domain === candidate ||
+    domain.endsWith(`.${candidate}`)
+  );
 }
 
 export function classifyDomain(
   domain: string
 ): WebsiteCategory {
-  const normalized = domain.toLowerCase().replace(/^www\./, "");
+  const normalized = domain
+    .toLowerCase()
+    .replace(/^www\./, "");
 
   for (const [category, domains] of Object.entries(
     CATEGORY_DOMAINS
   ) as [WebsiteCategory, string[]][]) {
-    if (domains.some(candidate => matchesDomain(normalized, candidate))) {
+    if (
+      domains.some(candidate =>
+        matchesDomain(normalized, candidate)
+      )
+    ) {
       return category;
     }
   }
