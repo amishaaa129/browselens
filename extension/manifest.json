@@ -3,7 +3,7 @@
   "name": "BrowseLens",
   "version": "1.0.0",
   "description": "Privacy-first browser activity tracker.",
-  "permissions": ["tabs", "storage", "alarms"],
+  "permissions": ["tabs", "storage", "alarms", "notifications"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "service_worker": "background.js"

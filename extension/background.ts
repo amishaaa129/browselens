@@ -1,10 +1,17 @@
+
 import { createActivity, sanitizeDomain } from "./tracker";
 import type { ActiveSession } from "./tracker";
 import { getActivities, saveActivity } from "./storage";
 import { classifyDomain } from "./classification";
+import {
+  checkFocusDistraction,
+  getFocusSettings,
+  updateFocusSettings,
+} from "./focusGuardian";
 
 const SESSION_KEY = "browselens_active_session";
 const ENABLED_KEY = "browselens_enabled";
+const FOCUS_ALARM = "browselens_focus_check";
 
 let currentSession: ActiveSession | null = null;
 let trackingEnabled = true;
@@ -21,7 +28,6 @@ function enqueue(task: () => Promise<void>): void {
     .catch(error => console.error("BrowseLens tracking error:", error));
 }
 
-
 async function loadState(): Promise<void> {
   const data = await chrome.storage.local.get([
     SESSION_KEY,
@@ -30,7 +36,6 @@ async function loadState(): Promise<void> {
 
   trackingEnabled = data[ENABLED_KEY] !== false;
 
-  // Restore the saved session instead of discarding it.
   const savedSession = data[SESSION_KEY] as ActiveSession | undefined;
   currentSession = savedSession ?? null;
 
@@ -53,7 +58,7 @@ async function loadState(): Promise<void> {
     return;
   }
 
-  // If the active website is unchanged, preserve its original start time.
+  // Preserve the original start time if the active domain is unchanged.
   if (currentSession?.domain === domain) {
     return;
   }
@@ -73,9 +78,9 @@ async function finishSession(): Promise<void> {
   const activity = createActivity(session, Date.now());
 
   if (activity) {
-  activity.category = classifyDomain(activity.domain);
-  await saveActivity(activity);
-}
+    activity.category = classifyDomain(activity.domain);
+    await saveActivity(activity);
+  }
 }
 
 async function startSession(url: string | undefined): Promise<void> {
@@ -86,23 +91,43 @@ async function startSession(url: string | undefined): Promise<void> {
 
   currentSession = {
     domain,
-    startedAt: Date.now()
+    startedAt: Date.now(),
   };
 
   await chrome.storage.local.set({
-    [SESSION_KEY]: currentSession
+    [SESSION_KEY]: currentSession,
   });
 }
+
 
 async function changeActiveTab(url?: string): Promise<void> {
   if (!initialized) return;
 
-  await finishSession();
-
-  if (trackingEnabled) {
-    await startSession(url);
+  if (!trackingEnabled || !url) {
+    await finishSession();
+    return;
   }
+
+  const domain = sanitizeDomain(url);
+
+  if (!domain) {
+    await finishSession();
+    return;
+  }
+
+  // Preserve the timer when the user is still on the same domain.
+  if (currentSession?.domain === domain) {
+    console.log(
+      "[BrowseLens] Same domain detected. Preserving session:",
+      domain
+    );
+    return;
+  }
+
+  await finishSession();
+  await startSession(url);
 }
+
 
 chrome.runtime.onStartup.addListener(() => {
   enqueue(loadState);
@@ -125,7 +150,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   enqueue(async () => {
     const [activeTab] = await chrome.tabs.query({
       active: true,
-      lastFocusedWindow: true
+      lastFocusedWindow: true,
     });
 
     if (activeTab?.id === tabId) {
@@ -135,49 +160,61 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.windows.onFocusChanged.addListener(windowId => {
-  enqueue(async () => {
-    await finishSession();
+  // Ignore temporary loss of focus.
+  // Do not destroy the active browsing session.
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    console.log("[BrowseLens] No focused window. Preserving session.");
+    return;
+  }
 
-    if (windowId === chrome.windows.WINDOW_ID_NONE || !trackingEnabled) {
+  enqueue(async () => {
+    if (!trackingEnabled) {
+      await finishSession();
       return;
     }
 
     const [tab] = await chrome.tabs.query({
       active: true,
-      windowId
+      windowId,
     });
 
-    await startSession(tab?.url);
+    if (tab?.url) {
+      await changeActiveTab(tab.url);
+    }
   });
 });
 
 chrome.runtime.onMessage.addListener(
   (message, _sender, sendResponse) => {
-    
-if (message?.type === "GET_ACTIVITIES") {
-  transitionQueue
-    .then(() => getActivities())
-    .then(activities => sendResponse({ activities }))
-    .catch(error => {
-      console.error("Failed to read activities:", error);
-      sendResponse({ activities: [], error: "Storage read failed" });
-    });
+    // Retrieve recorded activities.
+    if (message?.type === "GET_ACTIVITIES") {
+      transitionQueue
+        .then(() => getActivities())
+        .then(activities => sendResponse({ activities }))
+        .catch(error => {
+          console.error("Failed to read activities:", error);
+          sendResponse({
+            activities: [],
+            error: "Storage read failed",
+          });
+        });
 
-  return true;
-}
+      return true;
+    }
 
-
+    // Retrieve tracking status.
     if (message?.type === "GET_STATUS") {
       sendResponse({ enabled: trackingEnabled });
       return;
     }
 
+    // Enable or disable activity tracking.
     if (message?.type === "SET_TRACKING") {
       enqueue(async () => {
         trackingEnabled = Boolean(message.enabled);
 
         await chrome.storage.local.set({
-          [ENABLED_KEY]: trackingEnabled
+          [ENABLED_KEY]: trackingEnabled,
         });
 
         await finishSession();
@@ -185,7 +222,7 @@ if (message?.type === "GET_ACTIVITIES") {
         if (trackingEnabled) {
           const [tab] = await chrome.tabs.query({
             active: true,
-            lastFocusedWindow: true
+            lastFocusedWindow: true,
           });
 
           await startSession(tab?.url);
@@ -196,13 +233,69 @@ if (message?.type === "GET_ACTIVITIES") {
 
       return true;
     }
+
+    // Retrieve Focus Guardian settings.
+    if (message?.type === "GET_FOCUS_SETTINGS") {
+      getFocusSettings()
+        .then(settings => sendResponse({ settings }))
+        .catch(error => {
+          console.error("Failed to get focus settings:", error);
+          sendResponse({
+            error: "Could not load focus settings",
+          });
+        });
+
+      return true;
+    }
+
+    // Update Focus Guardian settings.
+    if (message?.type === "SET_FOCUS_SETTINGS") {
+      updateFocusSettings(message.settings)
+        .then(settings => sendResponse({ settings }))
+        .catch(error => {
+          console.error("Failed to update focus settings:", error);
+          sendResponse({
+            error: "Could not update focus settings",
+          });
+        });
+
+      return true;
+    }
   }
 );
 
+// Open the dashboard when the extension icon is clicked.
 chrome.action.onClicked.addListener(() => {
   void chrome.tabs.create({
     url: chrome.runtime.getURL("dashboard/index.html"),
   });
 });
 
+// Check for distractions every minute.
+chrome.alarms.onAlarm.addListener(alarm => {
+  console.log("[BrowseLens] Alarm fired:", alarm.name);
+
+  if (alarm.name !== FOCUS_ALARM) return;
+
+  enqueue(async () => {
+    console.log("[BrowseLens] Current session:", currentSession);
+
+    if (!initialized || !trackingEnabled || !currentSession) {
+      console.log("[BrowseLens] Cannot check distraction");
+      return;
+    }
+
+    await checkFocusDistraction(
+      currentSession.domain,
+      currentSession.startedAt
+    );
+  });
+});
+
+// Ensure the alarm exists after the service worker starts.
+chrome.alarms.create(FOCUS_ALARM, {
+  periodInMinutes: 1,
+});
+
+// Initialize tracking.
 enqueue(loadState);

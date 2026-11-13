@@ -12,18 +12,22 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { openDB, type DBSchema } from "idb";
+import FocusGuardian from "./FocusGuardian";
 
-type WebsiteCategory =
-  | "Development"
-  | "Education"
-  | "Productivity"
-  | "Social Media"
-  | "Entertainment"
-  | "News"
-  | "Shopping"
-  | "Other";
+import CategoryManager from "./CategoryManager";
 
-interface ActivityRecord {
+import {
+  CATEGORIES,
+  loadCategoryOverrides,
+  saveCategoryOverrides,
+  loadProductivityRules,
+  saveProductivityRules,
+  resetCategoryOverride,
+  type WebsiteCategory,
+  type ProductivityType,
+} from "./preferences";
+
+export interface ActivityRecord {
   id?: number;
   domain: string;
   startedAt: number;
@@ -42,17 +46,6 @@ interface BrowseLensDB extends DBSchema {
 
 const DB_NAME = "BrowseLensDB";
 const OVERRIDES_KEY = "browselens_category_overrides";
-
-const CATEGORIES: WebsiteCategory[] = [
-  "Development",
-  "Education",
-  "Productivity",
-  "Social Media",
-  "Entertainment",
-  "News",
-  "Shopping",
-  "Other",
-];
 
 const CATEGORY_DOMAINS: Record<WebsiteCategory, string[]> = {
   Development: [
@@ -215,8 +208,8 @@ export default function App() {
   const [enabled, setEnabled] = useState(true);
   const [extensionAvailable, setExtensionAvailable] = useState(false);
   const [error, setError] = useState("");
-  const [overrides, setOverrides] =
-    useState<Record<string, WebsiteCategory>>(readOverrides);
+  const [overrides, setOverrides] = useState(loadCategoryOverrides);
+  const [productivityRules, setProductivityRules] = useState(loadProductivityRules);
 
   const refresh = useCallback(async () => {
     try {
@@ -270,7 +263,32 @@ export default function App() {
 
   function categoryFor(row: ActivityRecord): WebsiteCategory {
     return overrides[row.domain] ?? row.category ?? classifyDomain(row.domain);
-  }
+    }
+
+  function handleCategoryChange(
+  domain: string,
+  category: WebsiteCategory,
+) {
+  const updated = { ...overrides, [domain]: category };
+  setOverrides(updated);
+  saveCategoryOverrides(updated);
+}
+
+function handleRuleChange(
+  category: WebsiteCategory,
+  type: ProductivityType,
+) {
+  const updated = { ...productivityRules, [category]: type };
+  setProductivityRules(updated);
+  saveProductivityRules(updated);
+}
+
+function handleResetCategory(domain: string) {
+  const updated = { ...overrides };
+  delete updated[domain];
+  setOverrides(updated);
+  resetCategoryOverride(domain);
+}
 
   const today = useMemo(
     () => activities.filter(row => isToday(row.startedAt)),
@@ -290,10 +308,11 @@ export default function App() {
       const category = categoryFor(row);
       totals.set(category, (totals.get(category) ?? 0) + row.durationMs);
 
-      const type = getDefaultType(category);
-      if (type === "productive") productiveMs += row.durationMs;
-      else if (type === "distraction") distractionMs += row.durationMs;
-      else neutralMs += row.durationMs;
+      const type = productivityRules[category];
+
+        if (type === "productive") productiveMs += row.durationMs;
+        else if (type === "distraction") distractionMs += row.durationMs;
+        else neutralMs += row.durationMs;
     }
 
     const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]);
@@ -323,7 +342,7 @@ export default function App() {
       contextSwitches,
       categories: sorted,
     };
-  }, [today, overrides]);
+  }, [today, overrides, productivityRules]);
 
   async function toggleTracking() {
     try {
@@ -397,6 +416,8 @@ export default function App() {
           {enabled ? "Pause tracking" : "Resume tracking"}
         </button>
       </section>
+
+      <FocusGuardian />
 
       <section className="stats">
         <article className="stat-card">
@@ -476,6 +497,15 @@ export default function App() {
           and can be adjusted per website below.
         </p>
       </section>
+
+       <CategoryManager
+        activities={activities}
+        overrides={overrides}
+        rules={productivityRules}
+        onCategoryChange={handleCategoryChange}
+        onRuleChange={handleRuleChange}
+        onResetCategory={handleResetCategory}
+      />
 
       <section className="history">
         <div className="section-heading">
