@@ -799,3 +799,279 @@ footer {
     width: 100%;
   }
 }
+
+
+/* PHASE 4 - INTELLIGENT INSIGHTS */
+
+.insights-panel {
+  margin-top: 22px;
+  padding: 24px;
+  border: 1px solid var(--border, #343434);
+  border-radius: 16px;
+  background: var(--card-bg, #121212);
+}
+
+.insights-panel .section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.insights-panel .section-heading h2,
+.insights-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.insights-period {
+  color: #a5b4fc;
+  font-size: 12px;
+}
+
+.insights-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.insight-score-card,
+.insight-section {
+  padding: 18px;
+  border: 1px solid var(--border, #343434);
+  border-radius: 12px;
+  background: var(--surface, #191919);
+}
+
+.insight-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #9ca3af;
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+.insight-score-card > strong {
+  display: block;
+  font-size: 25px;
+  margin-bottom: 7px;
+}
+
+.insight-score-card > p,
+.insight-muted {
+  color: #929292;
+  font-size: 12px;
+}
+
+.score-display {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.score-display strong {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.score-display span {
+  color: #999;
+}
+
+.score-track,
+.breakdown-track {
+  height: 8px;
+  background: #303030;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.score-fill,
+.breakdown-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
+.score-description {
+  margin-top: 10px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.insight-section {
+  margin-top: 16px;
+}
+
+.insight-section h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.score-breakdown {
+  display: grid;
+  gap: 17px;
+  margin-top: 20px;
+}
+
+.breakdown-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.breakdown-label span:last-child {
+  color: #9ca3af;
+}
+
+.breakdown-fill {
+  background: #647df5;
+}
+
+.weekly-trend {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  gap: 12px;
+  height: 180px;
+  padding: 15px 5px 0;
+}
+
+.trend-day {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 7px;
+  min-width: 0;
+}
+
+.trend-score,
+.trend-label {
+  color: #a1a1aa;
+  font-size: 11px;
+}
+
+.trend-bar-track {
+  display: flex;
+  align-items: flex-end;
+  width: min(32px, 75%);
+  height: 110px;
+  background: #292929;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.trend-bar {
+  width: 100%;
+  min-height: 0;
+  background: #647df5;
+  border-radius: 7px;
+  transition: height 0.3s ease;
+}
+
+.trend-label {
+  white-space: nowrap;
+}
+
+.insight-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.distraction-list {
+  display: grid;
+  gap: 13px;
+  margin-top: 16px;
+}
+
+.distraction-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.distraction-rank {
+  color: #9ca3af;
+  width: 18px;
+}
+
+.distraction-domain {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.distraction-row strong {
+  white-space: nowrap;
+}
+
+.peak-hour {
+  display: block;
+  font-size: 32px;
+  margin: 18px 0 10px;
+  color: #a5b4fc;
+}
+
+.recommendation-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.recommendation-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #202020;
+}
+
+.recommendation-item > span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 23px;
+  height: 23px;
+  border-radius: 50%;
+  background: #303d76;
+  color: #c7d2fe;
+  font-size: 11px;
+}
+
+.recommendation-item p {
+  margin: 2px 0 0;
+  color: #d1d5db;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.insight-privacy-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 18px 0 0;
+  color: #858585;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .insights-score-grid,
+  .insight-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .insights-panel {
+    padding: 16px;
+  }
+}

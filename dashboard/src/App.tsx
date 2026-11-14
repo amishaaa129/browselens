@@ -17,6 +17,7 @@ import { openDB, type DBSchema } from "idb";
 
 import FocusGuardian from "./FocusGuardian";
 import CategoryManager from "./CategoryManager";
+import InsightsPanel from "./InsightsPanel";
 
 import {
   CATEGORIES,
@@ -712,6 +713,12 @@ export default function App() {
       <FocusGuardian
         onClearAllData={clearAllBrowseLensData}
       />
+
+      <InsightsPanel
+  activities={activities}
+  categoryFor={categoryFor}
+  productivityRules={productivityRules}
+/>
 
       {/* STATISTICS */}
 
